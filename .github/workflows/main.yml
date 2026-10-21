@@ -1,5 +1,5 @@
 
-name: Build G.H Wedding Hub APK
+name: Build Android APK
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   build:
-    name: Build Android APK
+    name: Build G.H Wedding Hub APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -21,11 +21,23 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
+
+      - name: Check Android project files
+        run: |
+          echo "Checking project files..."
+          ls -la
+          test -f gradlew || {
+            echo "ERROR: gradlew is missing from repository root."
+            exit 1
+          }
+          test -f settings.gradle -o -f settings.gradle.kts || {
+            echo "ERROR: settings.gradle is missing from repository root."
+            exit 1
+          }
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -37,6 +49,7 @@ jobs:
         run: ./gradlew --no-daemon assembleDebug
 
       - name: Upload APK artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: GH-Wedding-Hub-APK
