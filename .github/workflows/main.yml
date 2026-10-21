@@ -1,4 +1,3 @@
-
 name: Build G.H Wedding Hub APK
 
 on:
@@ -10,8 +9,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: gh-wedding-hub-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
+    name: Build Android APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -19,19 +23,35 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Check project ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP_FILE="GH_Wedding_Hub_Android_Studio_Project.zip"
+
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "::error::Project ZIP not found: $ZIP_FILE"
+            echo "Check the ZIP filename and repository root."
+            exit 1
+          fi
+
+          unzip -tq "$ZIP_FILE"
+
       - name: Extract Android project
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
           mkdir -p extracted_project
-          unzip -oq GH_Wedding_Hub_Android_Studio_Project.zip -d extracted_project
+          unzip -oq GH_Wedding_Hub_Android_Studio_Project.zip \
+            -d extracted_project
 
-          SETTINGS=$(find extracted_project -type f \
-            \( -name settings.gradle -o -name settings.gradle.kts \) \
-            -print -quit)
+          SETTINGS="$(find extracted_project -type f \
+            \( -name settings.gradle \
+            -o -name settings.gradle.kts \) \
+            -print -quit)"
 
           if [ -z "$SETTINGS" ]; then
-            echo "ERROR: settings.gradle not found"
+            echo "::error::settings.gradle not found in ZIP"
             exit 1
           fi
 
@@ -39,40 +59,90 @@ jobs:
 
           if [ ! -f "$PROJECT_DIR/app/build.gradle" ] && \
              [ ! -f "$PROJECT_DIR/app/build.gradle.kts" ]; then
-            echo "ERROR: Android app Gradle file not found"
+            echo "::error::app Gradle file not found"
             exit 1
           fi
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Project directory: $PROJECT_DIR"
+          echo "Android project: $PROJECT_DIR"
 
-      - name: Set up Java
+      - name: Set up Java 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
 
-      - name: Install Gradle
+      - name: Check Android project configuration
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Java version:"
+          java -version
+
+          echo "Android SDK: ${ANDROID_HOME:-${ANDROID_SDK_ROOT:-not set}}"
+
+          if [ ! -f gradle/wrapper/gradle-wrapper.properties ] && \
+             [ ! -f gradlew ]; then
+            echo "Gradle wrapper is missing; preparing Gradle."
+          fi
+
+      - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      - name: Generate Gradle Wrapper if missing
+      - name: Prepare Gradle Wrapper
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
+
           if [ ! -f gradlew ]; then
+            echo "Generating Gradle wrapper..."
             gradle wrapper --gradle-version 8.9
           fi
+
           chmod +x gradlew
+
+          if [ ! -f gradle/wrapper/gradle-wrapper.properties ]; then
+            echo "::error::Gradle wrapper properties are missing"
+            exit 1
+          fi
 
       - name: Build Debug APK
         working-directory: ${{ env.PROJECT_DIR }}
-        run: ./gradlew --no-daemon assembleDebug
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon --stacktrace assembleDebug
+
+      - name: Verify APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APK_DIR="app/build/outputs/apk/debug"
+
+          if [ ! -d "$APK_DIR" ]; then
+            echo "::error::APK output directory not found"
+            exit 1
+          fi
+
+          find "$APK_DIR" -maxdepth 1 -type f -name '*.apk' -print
+
+          if ! find "$APK_DIR" -maxdepth 1 -type f \
+            -name '*.apk' -print -quit | grep -q .; then
+            echo "::error::No debug APK was generated"
+            exit 1
+          fi
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -81,4 +151,3 @@ jobs:
           path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 7
-          
