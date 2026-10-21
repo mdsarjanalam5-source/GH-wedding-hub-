@@ -12,7 +12,6 @@ permissions:
 
 jobs:
   build:
-    name: Extract and Build APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -20,34 +19,32 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract Android project ZIP
+      - name: Extract Android project
         shell: bash
         run: |
           set -e
-          ZIP_FILE="GH_Wedding_Hub_Android_Studio_Project.zip"
-
-          if [ ! -f "$ZIP_FILE" ]; then
-            echo "ERROR: Android project ZIP not found!"
-            ls -la
-            exit 1
-          fi
-
           mkdir -p extracted_project
-          unzip -oq "$ZIP_FILE" -d extracted_project
+          unzip -oq GH_Wedding_Hub_Android_Studio_Project.zip -d extracted_project
 
-          GRADLEW="$(find extracted_project -type f -name gradlew -print -quit)"
+          SETTINGS=$(find extracted_project -type f \
+            \( -name settings.gradle -o -name settings.gradle.kts \) \
+            -print -quit)
 
-          if [ -z "$GRADLEW" ]; then
-            echo "ERROR: gradlew not found inside ZIP."
-            echo "The ZIP may not contain a complete Android project."
-            find extracted_project -maxdepth 4 -type f | head -200
+          if [ -z "$SETTINGS" ]; then
+            echo "ERROR: settings.gradle not found"
             exit 1
           fi
 
-          PROJECT_DIR="$(dirname "$GRADLEW")"
+          PROJECT_DIR="$(dirname "$SETTINGS")"
+
+          if [ ! -f "$PROJECT_DIR/app/build.gradle" ] && \
+             [ ! -f "$PROJECT_DIR/app/build.gradle.kts" ]; then
+            echo "ERROR: Android app Gradle file not found"
+            exit 1
+          fi
+
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Android project found at: $PROJECT_DIR"
-          ls -la "$PROJECT_DIR"
+          echo "Project directory: $PROJECT_DIR"
 
       - name: Set up Java
         uses: actions/setup-java@v5
@@ -58,9 +55,20 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Make Gradle executable
+      - name: Install Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Generate Gradle Wrapper if missing
         working-directory: ${{ env.PROJECT_DIR }}
-        run: chmod +x gradlew
+        shell: bash
+        run: |
+          set -e
+          if [ ! -f gradlew ]; then
+            gradle wrapper --gradle-version 8.9
+          fi
+          chmod +x gradlew
 
       - name: Build Debug APK
         working-directory: ${{ env.PROJECT_DIR }}
