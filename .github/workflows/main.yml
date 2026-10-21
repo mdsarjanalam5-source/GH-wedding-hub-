@@ -1,5 +1,5 @@
 
-name: Build Android APK
+name: Build G.H Wedding Hub APK
 
 on:
   workflow_dispatch:
@@ -12,13 +12,42 @@ permissions:
 
 jobs:
   build:
-    name: Build G.H Wedding Hub APK
+    name: Extract and Build APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
-      - name: Checkout source code
+      - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Extract Android project ZIP
+        shell: bash
+        run: |
+          set -e
+          ZIP_FILE="GH_Wedding_Hub_Android_Studio_Project.zip"
+
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "ERROR: Android project ZIP not found!"
+            ls -la
+            exit 1
+          fi
+
+          mkdir -p extracted_project
+          unzip -oq "$ZIP_FILE" -d extracted_project
+
+          GRADLEW="$(find extracted_project -type f -name gradlew -print -quit)"
+
+          if [ -z "$GRADLEW" ]; then
+            echo "ERROR: gradlew not found inside ZIP."
+            echo "The ZIP may not contain a complete Android project."
+            find extracted_project -maxdepth 4 -type f | head -200
+            exit 1
+          fi
+
+          PROJECT_DIR="$(dirname "$GRADLEW")"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Android project found at: $PROJECT_DIR"
+          ls -la "$PROJECT_DIR"
 
       - name: Set up Java
         uses: actions/setup-java@v5
@@ -26,34 +55,22 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Check Android project files
-        run: |
-          echo "Checking project files..."
-          ls -la
-          test -f gradlew || {
-            echo "ERROR: gradlew is missing from repository root."
-            exit 1
-          }
-          test -f settings.gradle -o -f settings.gradle.kts || {
-            echo "ERROR: settings.gradle is missing from repository root."
-            exit 1
-          }
-
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
       - name: Make Gradle executable
+        working-directory: ${{ env.PROJECT_DIR }}
         run: chmod +x gradlew
 
       - name: Build Debug APK
+        working-directory: ${{ env.PROJECT_DIR }}
         run: ./gradlew --no-daemon assembleDebug
 
-      - name: Upload APK artifact
-        if: success()
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: GH-Wedding-Hub-APK
-          path: app/build/outputs/apk/debug/*.apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 7
           
